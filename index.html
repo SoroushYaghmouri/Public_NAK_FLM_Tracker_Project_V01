@@ -654,10 +654,6 @@
   <div class="toast" id="toast"></div>
 
 <script>
-/* Early safety stubs — prevent ReferenceError if old cached code calls these before full init */
-window.updateCameraOverlay = window.updateCameraOverlay || function () {};
-window.updateLiveOverlay = window.updateLiveOverlay || function () {};
-
 (function () {
   'use strict';
 
@@ -1386,6 +1382,43 @@ window.updateLiveOverlay = window.updateLiveOverlay || function () {};
     ctx.closePath();
   }
 
+  /** Wrap text to fit maxWidth using canvas measureText. */
+  function wrapText(ctx, text, maxWidth) {
+    const str = String(text || '');
+    if (!str) return [''];
+    if (ctx.measureText(str).width <= maxWidth) return [str];
+    const lines = [];
+    const parts = str.split(/(\s+)/);
+    let current = '';
+    function pushCurrent() {
+      if (current) { lines.push(current); current = ''; }
+    }
+    for (const part of parts) {
+      const test = current + part;
+      if (ctx.measureText(test).width <= maxWidth) {
+        current = test;
+      } else {
+        if (current) pushCurrent();
+        if (ctx.measureText(part).width <= maxWidth) {
+          current = part.replace(/^\s+/, '');
+        } else {
+          let chunk = '';
+          for (const ch of part) {
+            if (ctx.measureText(chunk + ch).width <= maxWidth) {
+              chunk += ch;
+            } else {
+              if (chunk) lines.push(chunk);
+              chunk = ch;
+            }
+          }
+          current = chunk;
+        }
+      }
+    }
+    pushCurrent();
+    return lines.length ? lines : [''];
+  }
+
   function capturePhoto() {
     const video = $('#video');
     const canvas = $('#canvas');
@@ -1397,44 +1430,80 @@ window.updateLiveOverlay = window.updateLiveOverlay || function () {};
 
     const site = state.currentSite;
     const p = state.person;
-    const pad = Math.max(12, Math.round(w * 0.02));
-    const fontSize = Math.max(14, Math.round(w * 0.027));
-    const lineH = fontSize * 1.35;
+    const pad = Math.max(14, Math.round(w * 0.022));
+    const innerPad = Math.max(10, Math.round(w * 0.016));
+    const fontSize = Math.max(13, Math.min(22, Math.round(w * 0.026)));
+    const lineH = fontSize * 1.32;
+    const botFontSize = Math.max(12, Math.round(fontSize * 0.9));
+    const botLineH = botFontSize * 1.28;
 
-    const linesTop = [
-      `Site ID: ${site.siteId}`,
+    // Top info box
+    const boxW = Math.min(w * 0.94, w - pad * 2);
+    const textMaxW = boxW - innerPad * 2;
+
+    ctx.font = `600 ${fontSize}px Segoe UI, Tahoma, "Vazirmatn", sans-serif`;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.direction = 'ltr';
+
+    const rawTop = [
+      `Site ID: ${site.siteId || ''}`,
       `Site Name: ${site.name || ''}`,
-      `Address: ${(site.address || '').slice(0, 95)}`,
+      `Address: ${site.address || '—'}`,
       `Lat: ${site.lat || '—'}   Lng: ${site.lng || '—'}`
     ];
-    const boxW = Math.min(w * 0.92, w - pad * 2);
-    const boxH = pad * 0.55 + linesTop.length * lineH + pad * 0.35;
-    ctx.fillStyle = 'rgba(0,0,0,0.74)';
+    const linesTop = [];
+    rawTop.forEach(ln => {
+      wrapText(ctx, ln, textMaxW).forEach(wl => linesTop.push(wl));
+    });
+    const maxTopLines = 8;
+    const displayTop = linesTop.slice(0, maxTopLines);
+    if (linesTop.length > maxTopLines) {
+      const last = displayTop[displayTop.length - 1];
+      displayTop[displayTop.length - 1] = last.slice(0, Math.max(0, last.length - 1)) + '…';
+    }
+
+    const boxH = innerPad + displayTop.length * lineH + innerPad * 0.35;
+    ctx.fillStyle = 'rgba(0,0,0,0.78)';
     roundRect(ctx, pad, pad, boxW, boxH, 10);
     ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = `600 ${fontSize}px Segoe UI, Tahoma, sans-serif`;
-    ctx.textBaseline = 'top';
-    linesTop.forEach((ln, i) => ctx.fillText(ln, pad + 10, pad + 8 + i * lineH, boxW - 20));
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `600 ${fontSize}px Segoe UI, Tahoma, "Vazirmatn", sans-serif`;
+    displayTop.forEach((ln, i) => {
+      ctx.fillText(ln, pad + innerPad, pad + innerPad * 0.65 + i * lineH, textMaxW);
+    });
 
-    const linesBot = [
+    // Bottom info box
+    const mapSize = Math.min(120, Math.round(w * 0.2));
+    const gap = Math.max(10, Math.round(w * 0.015));
+    const botW = Math.min(w * 0.62, w - pad * 2 - mapSize - gap);
+    const botTextMaxW = botW - innerPad * 2;
+
+    ctx.font = `600 ${botFontSize}px Segoe UI, Tahoma, "Vazirmatn", sans-serif`;
+    const rawBot = [
       `Rigger: ${p.rigger || '—'}`,
       `FLM: ${p.flm || '—'}`,
       `Phone: ${p.phone || '—'}`,
       `Team: ${p.team || '—'}`,
       `Time: ${nowStr()}`
     ];
-    const botH = pad * 0.45 + linesBot.length * (lineH * 0.92) + pad * 0.25;
-    const botY = h - pad - botH;
-    const botW = Math.min(w * 0.58, w - pad * 2 - 130);
-    ctx.fillStyle = 'rgba(0,0,0,0.74)';
+    const linesBot = [];
+    rawBot.forEach(ln => {
+      wrapText(ctx, ln, botTextMaxW).forEach(wl => linesBot.push(wl));
+    });
+    const botH = innerPad * 0.7 + linesBot.length * botLineH + innerPad * 0.4;
+    const botY = h - pad - Math.max(botH, mapSize);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.78)';
     roundRect(ctx, pad, botY, botW, botH, 10);
     ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = `600 ${Math.max(12, fontSize * 0.88)}px Segoe UI, Tahoma, sans-serif`;
-    linesBot.forEach((ln, i) => ctx.fillText(ln, pad + 10, botY + 6 + i * (lineH * 0.92), botW - 20));
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `600 ${botFontSize}px Segoe UI, Tahoma, "Vazirmatn", sans-serif`;
+    linesBot.forEach((ln, i) => {
+      ctx.fillText(ln, pad + innerPad, botY + innerPad * 0.55 + i * botLineH, botTextMaxW);
+    });
 
-    const mapSize = Math.min(120, Math.round(w * 0.22));
+    // Mini map
     const mapX = w - pad - mapSize;
     const mapY = h - pad - mapSize;
     ctx.fillStyle = 'rgba(15,23,42,0.92)';
@@ -1463,6 +1532,7 @@ window.updateLiveOverlay = window.updateLiveOverlay || function () {};
     ctx.textAlign = 'center';
     ctx.fillText('📍', mapX + mapSize / 2, mapY + mapSize / 2 - 2);
     ctx.textAlign = 'start';
+    ctx.direction = 'ltr';
 
     state.capturedDataUrl = canvas.toDataURL('image/jpeg', 0.92);
     $('#photoPreview').src = state.capturedDataUrl;
@@ -1950,30 +2020,16 @@ window.updateLiveOverlay = window.updateLiveOverlay || function () {};
 
   if ('serviceWorker' in navigator) {
     const swCode = `
-      const CACHE = 'sitevisit-v3-20260818';
+      const CACHE = 'sitevisit-v2';
       self.addEventListener('install', e => {
         self.skipWaiting();
         e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./'])));
       });
       self.addEventListener('activate', e => {
-        e.waitUntil(
-          caches.keys().then(keys =>
-            Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-          ).then(() => self.clients.claim())
-        );
+        e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))));
+        self.clients.claim();
       });
       self.addEventListener('fetch', e => {
-        // network-first for HTML so updates are not stuck behind old SW cache
-        if (e.request.mode === 'navigate' || (e.request.headers.get('accept') || '').includes('text/html')) {
-          e.respondWith(
-            fetch(e.request).then(res => {
-              const copy = res.clone();
-              caches.open(CACHE).then(c => c.put(e.request, copy));
-              return res;
-            }).catch(() => caches.match(e.request).then(r => r || caches.match('./')))
-          );
-          return;
-        }
         e.respondWith(
           caches.match(e.request).then(r => r || fetch(e.request).catch(() => caches.match('./')))
         );
@@ -1981,14 +2037,7 @@ window.updateLiveOverlay = window.updateLiveOverlay || function () {};
     `;
     const swBlob = new Blob([swCode], { type: 'application/javascript' });
     const swUrl = URL.createObjectURL(swBlob);
-    // unregister any previous blob-SW then register fresh
-    navigator.serviceWorker.getRegistrations().then(regs => {
-      Promise.all(regs.map(r => r.unregister())).finally(() => {
-        navigator.serviceWorker.register(swUrl).catch(() => {});
-      });
-    }).catch(() => {
-      navigator.serviceWorker.register(swUrl).catch(() => {});
-    });
+    navigator.serviceWorker.register(swUrl).catch(() => {});
   }
 
   window.addEventListener('beforeinstallprompt', e => {
