@@ -1373,50 +1373,86 @@
   $('#btnCapture').addEventListener('click', () => capturePhoto());
 
   function roundRect(ctx, x, y, w, h, r) {
+    const rr = Math.min(r, w / 2, h / 2);
     ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
     ctx.closePath();
   }
 
-  /** Wrap text to fit maxWidth using canvas measureText. */
+  /** Reliable text wrap for canvas (handles long Persian words). */
   function wrapText(ctx, text, maxWidth) {
-    const str = String(text || '');
+    const str = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
     if (!str) return [''];
-    if (ctx.measureText(str).width <= maxWidth) return [str];
+    const limit = Math.max(8, maxWidth * 0.98);
+    if (ctx.measureText(str).width <= limit) return [str];
+
     const lines = [];
-    const parts = str.split(/(\s+)/);
-    let current = '';
-    function pushCurrent() {
-      if (current) { lines.push(current); current = ''; }
-    }
-    for (const part of parts) {
-      const test = current + part;
-      if (ctx.measureText(test).width <= maxWidth) {
-        current = test;
+    // First try space-based, then hard char wrap
+    const words = str.split(' ');
+    let line = '';
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      const trial = line ? (line + ' ' + word) : word;
+      if (ctx.measureText(trial).width <= limit) {
+        line = trial;
+        continue;
+      }
+      if (line) lines.push(line);
+      // word itself may be longer than limit
+      if (ctx.measureText(word).width <= limit) {
+        line = word;
       } else {
-        if (current) pushCurrent();
-        if (ctx.measureText(part).width <= maxWidth) {
-          current = part.replace(/^\s+/, '');
-        } else {
-          let chunk = '';
-          for (const ch of part) {
-            if (ctx.measureText(chunk + ch).width <= maxWidth) {
-              chunk += ch;
-            } else {
-              if (chunk) lines.push(chunk);
-              chunk = ch;
-            }
+        let chunk = '';
+        for (const ch of word) {
+          if (ctx.measureText(chunk + ch).width <= limit) {
+            chunk += ch;
+          } else {
+            if (chunk) lines.push(chunk);
+            chunk = ch;
           }
-          current = chunk;
         }
+        line = chunk;
       }
     }
-    pushCurrent();
+    if (line) lines.push(line);
     return lines.length ? lines : [''];
+  }
+
+  function fitLine(ctx, text, maxWidth) {
+    const limit = Math.max(8, maxWidth * 0.98);
+    let s = String(text || '');
+    if (ctx.measureText(s).width <= limit) return s;
+    while (s.length > 1 && ctx.measureText(s + '…').width > limit) {
+      s = s.slice(0, -1);
+    }
+    return s + '…';
+  }
+
+  function drawInfoBox(ctx, x, y, width, lines, fontSize, lineH, innerPad) {
+    const boxH = innerPad + lines.length * lineH + Math.round(innerPad * 0.35);
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.80)';
+    roundRect(ctx, x, y, width, boxH, 10);
+    ctx.fill();
+    // clip so nothing can paint outside the rounded box
+    roundRect(ctx, x, y, width, boxH, 10);
+    ctx.clip();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `600 ${fontSize}px Tahoma, "Segoe UI", Arial, sans-serif`;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.direction = 'ltr';
+    const textMax = width - innerPad * 2;
+    lines.forEach((ln, i) => {
+      const t = fitLine(ctx, ln, textMax);
+      ctx.fillText(t, x + innerPad, y + innerPad * 0.6 + i * lineH);
+    });
+    ctx.restore();
+    return boxH;
   }
 
   function capturePhoto() {
@@ -1424,84 +1460,67 @@
     const canvas = $('#canvas');
     if (!video.videoWidth) { toast('دوربین آماده نیست', 'err'); return; }
     const w = video.videoWidth, h = video.videoHeight;
-    canvas.width = w; canvas.height = h;
+    canvas.width = w;
+    canvas.height = h;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, w, h);
 
-    const site = state.currentSite;
-    const p = state.person;
-    const pad = Math.max(14, Math.round(w * 0.022));
-    const innerPad = Math.max(10, Math.round(w * 0.016));
-    const fontSize = Math.max(13, Math.min(22, Math.round(w * 0.026)));
-    const lineH = fontSize * 1.32;
-    const botFontSize = Math.max(12, Math.round(fontSize * 0.9));
-    const botLineH = botFontSize * 1.28;
+    const site = state.currentSite || {};
+    const p = state.person || {};
+    const pad = Math.max(16, Math.round(Math.min(w, h) * 0.02));
+    const innerPad = Math.max(12, Math.round(Math.min(w, h) * 0.015));
+    // Scale font with the shorter side so portrait/landscape both look good
+    const base = Math.min(w, h);
+    const fontSize = Math.max(14, Math.min(28, Math.round(base * 0.028)));
+    const lineH = Math.round(fontSize * 1.38);
+    const botFontSize = Math.max(13, Math.round(fontSize * 0.92));
+    const botLineH = Math.round(botFontSize * 1.34);
 
-    // Top info box
-    const boxW = Math.min(w * 0.94, w - pad * 2);
-    const textMaxW = boxW - innerPad * 2;
+    const boxW = Math.min(w - pad * 2, Math.round(w * 0.94));
 
-    ctx.font = `600 ${fontSize}px Segoe UI, Tahoma, "Vazirmatn", sans-serif`;
-    ctx.textBaseline = 'top';
-    ctx.textAlign = 'left';
+    // Prepare top lines with wrap
+    ctx.font = `600 ${fontSize}px Tahoma, "Segoe UI", Arial, sans-serif`;
     ctx.direction = 'ltr';
-
+    const textMaxW = boxW - innerPad * 2;
     const rawTop = [
-      `Site ID: ${site.siteId || ''}`,
-      `Site Name: ${site.name || ''}`,
-      `Address: ${site.address || '—'}`,
-      `Lat: ${site.lat || '—'}   Lng: ${site.lng || '—'}`
+      'Site ID: ' + (site.siteId || ''),
+      'Site Name: ' + (site.name || ''),
+      'Address: ' + (site.address || '—'),
+      'Lat: ' + (site.lat || '—') + '   Lng: ' + (site.lng || '—')
     ];
-    const linesTop = [];
-    rawTop.forEach(ln => {
-      wrapText(ctx, ln, textMaxW).forEach(wl => linesTop.push(wl));
+    let linesTop = [];
+    rawTop.forEach(function (ln) {
+      wrapText(ctx, ln, textMaxW).forEach(function (wl) { linesTop.push(wl); });
     });
-    const maxTopLines = 8;
-    const displayTop = linesTop.slice(0, maxTopLines);
-    if (linesTop.length > maxTopLines) {
-      const last = displayTop[displayTop.length - 1];
-      displayTop[displayTop.length - 1] = last.slice(0, Math.max(0, last.length - 1)) + '…';
+    if (linesTop.length > 9) {
+      linesTop = linesTop.slice(0, 9);
+      linesTop[8] = fitLine(ctx, linesTop[8], textMaxW);
     }
 
-    const boxH = innerPad + displayTop.length * lineH + innerPad * 0.35;
-    ctx.fillStyle = 'rgba(0,0,0,0.78)';
-    roundRect(ctx, pad, pad, boxW, boxH, 10);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `600 ${fontSize}px Segoe UI, Tahoma, "Vazirmatn", sans-serif`;
-    displayTop.forEach((ln, i) => {
-      ctx.fillText(ln, pad + innerPad, pad + innerPad * 0.65 + i * lineH, textMaxW);
-    });
+    drawInfoBox(ctx, pad, pad, boxW, linesTop, fontSize, lineH, innerPad);
 
-    // Bottom info box
-    const mapSize = Math.min(120, Math.round(w * 0.2));
-    const gap = Math.max(10, Math.round(w * 0.015));
-    const botW = Math.min(w * 0.62, w - pad * 2 - mapSize - gap);
+    // Bottom box + map
+    const mapSize = Math.min(130, Math.round(base * 0.2));
+    const gap = Math.max(12, Math.round(base * 0.015));
+    const botW = Math.min(Math.round(w * 0.62), w - pad * 2 - mapSize - gap);
+
+    ctx.font = `600 ${botFontSize}px Tahoma, "Segoe UI", Arial, sans-serif`;
     const botTextMaxW = botW - innerPad * 2;
-
-    ctx.font = `600 ${botFontSize}px Segoe UI, Tahoma, "Vazirmatn", sans-serif`;
     const rawBot = [
-      `Rigger: ${p.rigger || '—'}`,
-      `FLM: ${p.flm || '—'}`,
-      `Phone: ${p.phone || '—'}`,
-      `Team: ${p.team || '—'}`,
-      `Time: ${nowStr()}`
+      'Rigger: ' + (p.rigger || '—'),
+      'FLM: ' + (p.flm || '—'),
+      'Phone: ' + (p.phone || '—'),
+      'Team: ' + (p.team || '—'),
+      'Time: ' + nowStr()
     ];
     const linesBot = [];
-    rawBot.forEach(ln => {
-      wrapText(ctx, ln, botTextMaxW).forEach(wl => linesBot.push(wl));
+    rawBot.forEach(function (ln) {
+      wrapText(ctx, ln, botTextMaxW).forEach(function (wl) { linesBot.push(wl); });
     });
-    const botH = innerPad * 0.7 + linesBot.length * botLineH + innerPad * 0.4;
+    const botH = innerPad + linesBot.length * botLineH + Math.round(innerPad * 0.35);
     const botY = h - pad - Math.max(botH, mapSize);
 
-    ctx.fillStyle = 'rgba(0,0,0,0.78)';
-    roundRect(ctx, pad, botY, botW, botH, 10);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `600 ${botFontSize}px Segoe UI, Tahoma, "Vazirmatn", sans-serif`;
-    linesBot.forEach((ln, i) => {
-      ctx.fillText(ln, pad + innerPad, botY + innerPad * 0.55 + i * botLineH, botTextMaxW);
-    });
+    drawInfoBox(ctx, pad, botY, botW, linesBot, botFontSize, botLineH, innerPad);
 
     // Mini map
     const mapX = w - pad - mapSize;
@@ -1511,6 +1530,7 @@
     ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,0.45)';
     ctx.lineWidth = 2;
+    roundRect(ctx, mapX, mapY, mapSize, mapSize, 8);
     ctx.stroke();
 
     const mapImg = $('#mapMini img');
@@ -1518,20 +1538,25 @@
       try { ctx.drawImage(mapImg, mapX + 2, mapY + 2, mapSize - 4, mapSize - 4); } catch (e) {}
     } else {
       ctx.fillStyle = '#94a3b8';
-      ctx.font = `${Math.max(11, fontSize * 0.65)}px sans-serif`;
+      ctx.font = Math.max(11, Math.round(fontSize * 0.65)) + 'px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('📍', mapX + mapSize / 2, mapY + mapSize / 2 - 10);
+      ctx.textBaseline = 'middle';
+      ctx.fillText('📍', mapX + mapSize / 2, mapY + mapSize / 2 - 12);
       if (site.lat && site.lng) {
-        ctx.font = `${Math.max(9, fontSize * 0.52)}px monospace`;
+        ctx.font = Math.max(9, Math.round(fontSize * 0.5)) + 'px monospace';
         ctx.fillText(String(site.lat).slice(0, 8), mapX + mapSize / 2, mapY + mapSize / 2 + 6);
         ctx.fillText(String(site.lng).slice(0, 8), mapX + mapSize / 2, mapY + mapSize / 2 + 18);
-      } else ctx.fillText('No GPS', mapX + mapSize / 2, mapY + mapSize / 2 + 6);
-      ctx.textAlign = 'start';
+      } else {
+        ctx.fillText('No GPS', mapX + mapSize / 2, mapY + mapSize / 2 + 6);
+      }
     }
-    ctx.font = `${Math.max(18, mapSize * 0.28)}px sans-serif`;
+    ctx.font = Math.max(18, Math.round(mapSize * 0.28)) + 'px sans-serif';
     ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffffff';
     ctx.fillText('📍', mapX + mapSize / 2, mapY + mapSize / 2 - 2);
-    ctx.textAlign = 'start';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
     ctx.direction = 'ltr';
 
     state.capturedDataUrl = canvas.toDataURL('image/jpeg', 0.92);
