@@ -399,6 +399,7 @@
       <div class="stat"><div class="n" id="statSites">۰</div><div class="l">سایت</div></div>
       <div class="stat"><div class="n" id="statBattery">۰</div><div class="l">باتری</div></div>
       <div class="stat"><div class="n" id="statPM">۰</div><div class="l">PM</div></div>
+      <div class="stat"><div class="n" id="statAccess">۰</div><div class="l">دسترسی ۲۴س</div></div>
       <div class="stat"><div class="n" id="statReports">۰</div><div class="l">گزارش</div></div>
       <div class="stat"><div class="n" id="statPhotos">۰</div><div class="l">عکس</div></div>
     </div>
@@ -420,9 +421,15 @@
         <p><strong>PM Supervisor / Tracker</strong><br/>کلیک یا رها کردن فایل</p>
       </div>
       <div id="chipPM"></div>
+      <div class="upload-zone" id="dropAccess" data-type="access">
+        <div class="icon">🔑</div>
+        <p><strong>Access / دسترسی ۲۴ ساعته</strong><br/>کلیک یا رها کردن فایل</p>
+      </div>
+      <div id="chipAccess"></div>
       <input type="file" id="fileAras" accept=".xlsx,.xls,.csv" />
       <input type="file" id="fileBattery" accept=".xlsx,.xls,.csv" />
       <input type="file" id="filePM" accept=".xlsx,.xls,.csv" />
+      <input type="file" id="fileAccess" accept=".xlsx,.xls,.csv" />
     </div>
 
     <div class="card">
@@ -449,7 +456,7 @@
     <div class="card">
       <div class="card-title">راهنمای سریع</div>
       <p style="font-size:.82rem;color:var(--muted);line-height:1.75;">
-        ۱. اکسل‌های ARAS، Battery و PM را بارگذاری کنید.<br/>
+        ۱. اکسل‌های ARAS، Battery، PM و Access (دسترسی ۲۴س) را بارگذاری کنید.<br/>
         ۲. اطلاعات ریگر / FLM / تلفن را ذخیره کنید.<br/>
         ۳. از «سایت‌ها» سایت را پیدا کنید و جزئیات را ببینید.<br/>
         ۴. عکس بگیرید (واترمارک کامل + مینی‌مپ).<br/>
@@ -470,6 +477,7 @@
       <span class="filter-chip" data-f="inservice">In Service</span>
       <span class="filter-chip" data-f="vip">VIP / P1</span>
       <span class="filter-chip" data-f="battery">دارای باتری</span>
+      <span class="filter-chip" data-f="access24">دسترسی ۲۴س</span>
       <span class="filter-chip" data-f="pmreject">PM Reject</span>
     </div>
     <div id="siteList"></div>
@@ -633,7 +641,7 @@
       <p style="font-size:.82rem;color:var(--muted);line-height:1.65;">
         <strong>Site Visit Field App v2.0</strong><br/>
         اپلیکیشن کامل بازدید میدانی — Standalone HTML<br/>
-        پشتیبانی از ARAS + Battery + PM · عکس با واترمارک · چک‌لیست · گزارش Excel · PWA
+        پشتیبانی از ARAS + Battery + PM + Access ۲۴س · عکس با واترمارک · چک‌لیست · گزارش Excel · PWA
       </p>
     </div>
   </div>
@@ -674,6 +682,7 @@
     aras: [],
     battery: {},
     pm: {},
+    access: {},
     photos: [],
     reports: [],
     person: { rigger: '', flm: '', phone: '', team: '' },
@@ -807,6 +816,7 @@
   setupUpload('#dropAras', '#fileAras', 'aras');
   setupUpload('#dropBattery', '#fileBattery', 'battery');
   setupUpload('#dropPM', '#filePM', 'pm');
+  setupUpload('#dropAccess', '#fileAccess', 'access');
 
   function handleFile(file, type) {
     const reader = new FileReader();
@@ -819,6 +829,7 @@
         if (type === 'aras') parseAras(rows, file.name);
         else if (type === 'battery') parseBattery(rows, file.name);
         else if (type === 'pm') parsePM(rows, file.name);
+        else if (type === 'access') parseAccess(rows, file.name);
         updateStats();
         toast('بارگذاری موفق', 'ok');
       } catch (err) {
@@ -1006,6 +1017,27 @@
     bindChipClear();
   }
 
+  function parseAccess(rows, fname) {
+    state.access = {};
+    rows.forEach(r => {
+      const id = getVal(r, ['کد سایت', 'Site ID', 'site id', 'کدسایت', 'Code Site']);
+      if (!id) return;
+      const status = getVal(r, ['وضعیت دسترسی', 'Access Status', 'Access', 'دسترسی']);
+      state.access[id] = {
+        siteId: id,
+        accessStatus: status || 'دسترسی 24 ساعته',
+        name: getVal(r, ['نام سایت', 'Site Name']),
+        address: getVal(r, ['آدرس', 'Address']),
+        nodeStatus: getVal(r, ['وضعیت نود', 'Status', 'وضعیت']),
+        subcontractor: getVal(r, ['Subcontractor', 'پیمانکار']),
+        is24h: true,
+        raw: r
+      };
+    });
+    $('#chipAccess').innerHTML = `<span class="file-chip">✓ ${esc(fname)} — ${toFa(Object.keys(state.access).length)} <span class="x" data-clear="access">✕</span></span>`;
+    bindChipClear();
+  }
+
   function bindChipClear() {
     $$('.file-chip .x').forEach(x => {
       x.onclick = () => {
@@ -1013,6 +1045,7 @@
         if (t === 'aras') { state.aras = []; $('#chipAras').innerHTML = ''; }
         if (t === 'battery') { state.battery = {}; $('#chipBattery').innerHTML = ''; }
         if (t === 'pm') { state.pm = {}; $('#chipPM').innerHTML = ''; }
+        if (t === 'access') { state.access = {}; $('#chipAccess').innerHTML = ''; }
         updateStats();
       };
     });
@@ -1022,6 +1055,8 @@
     $('#statSites').textContent = toFa(state.aras.length);
     $('#statBattery').textContent = toFa(Object.keys(state.battery).length);
     $('#statPM').textContent = toFa(Object.keys(state.pm).length);
+    const accessEl = $('#statAccess');
+    if (accessEl) accessEl.textContent = toFa(Object.keys(state.access).length);
     $('#statPhotos').textContent = toFa(state.photos.length);
     $('#statReports').textContent = toFa(state.reports.length);
     $('#siteCountBadge').textContent = toFa(state.aras.length) + ' سایت';
@@ -1038,6 +1073,7 @@
       return v.includes('P1') || v.includes('VIP') || v.includes('P2');
     });
     if (f === 'battery') sites = sites.filter(s => !!state.battery[s.siteId]);
+    if (f === 'access24') sites = sites.filter(s => !!state.access[s.siteId]);
     if (f === 'pmreject') sites = sites.filter(s => {
       const pm = state.pm[s.siteId];
       return pm && (pm.allStatus || '').toLowerCase().includes('reject');
@@ -1078,6 +1114,7 @@
       if (s.subcontractor) tags.push(`<span class="tag">${esc(s.subcontractor)}</span>`);
       if (s.vendor) tags.push(`<span class="tag">${esc(s.vendor)}</span>`);
       if (bat) tags.push(`<span class="tag warn">🔋</span>`);
+      if (state.access[s.siteId]) tags.push(`<span class="tag ok">🔑 ۲۴س</span>`);
       if (pm) {
         const st = (pm.allStatus || '').toLowerCase();
         tags.push(`<span class="tag ${st.includes('reject') ? 'err' : st.includes('accept') ? 'ok' : ''}">PM:${esc(pm.allStatus || '—')}</span>`);
@@ -1151,6 +1188,22 @@
         ${mapsUrl ? `<a class="btn btn-outline" href="${mapsUrl}" target="_blank" rel="noopener" style="text-decoration:none;">🗺️ نقشه</a>` : ''}
         ${navUrl ? `<a class="btn btn-outline" href="${navUrl}" target="_blank" rel="noopener" style="text-decoration:none;">🧭 مسیریابی</a>` : ''}
       </div>`;
+
+    const acc = state.access[s.siteId];
+    if (acc) {
+      html += `<div class="card" style="border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.08);">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <span style="font-size:1.2rem;">🔑</span>
+          <strong style="color:var(--success);">دسترسی ۲۴ ساعته</strong>
+        </div>
+        <div style="font-size:.82rem;color:var(--muted);line-height:1.55;">
+          ${esc(acc.accessStatus || 'دسترسی 24 ساعته')}
+          ${acc.subcontractor ? ' · پیمانکار: ' + esc(acc.subcontractor) : ''}
+          ${acc.nodeStatus ? ' · وضعیت نود: ' + esc(acc.nodeStatus) : ''}
+        </div>
+        ${acc.address ? `<div style="font-size:.8rem;margin-top:6px;line-height:1.45;">${esc(acc.address)}</div>` : ''}
+      </div>`;
+    }
 
     html += `<div class="section"><h3>اطلاعات فنی</h3><div class="card" style="padding:0;overflow:hidden;">
       <table class="data">
@@ -1293,8 +1346,9 @@
     const top = $('#overlayTop');
     const bot = $('#overlayBottom');
     if (top) {
+      const accLive = state.access[site.siteId];
       top.innerHTML = `
-      <div><span class="k">Site ID:</span> <span class="v">${esc(site.siteId)}</span></div>
+      <div><span class="k">Site ID:</span> <span class="v">${esc(site.siteId)}</span>${accLive ? ' <span class="v" style="color:#4ade80;">🔑 ۲۴س</span>' : ''}</div>
       <div><span class="k">Name:</span> <span class="v">${esc(site.name || '')}</span></div>
       <div><span class="k">Address:</span> <span class="v">${esc((site.address || '').slice(0, 85))}</span></div>
       <div><span class="k">Lat:</span> <span class="v" dir="ltr">${esc(site.lat || '—')}</span>
@@ -1482,8 +1536,9 @@
     ctx.font = `600 ${fontSize}px Tahoma, "Segoe UI", Arial, sans-serif`;
     ctx.direction = 'ltr';
     const textMaxW = boxW - innerPad * 2;
+    const acc24 = state.access[site.siteId];
     const rawTop = [
-      'Site ID: ' + (site.siteId || ''),
+      'Site ID: ' + (site.siteId || '') + (acc24 ? '  |  🔑 24h Access' : ''),
       'Site Name: ' + (site.name || ''),
       'Address: ' + (site.address || '—'),
       'Lat: ' + (site.lat || '—') + '   Lng: ' + (site.lng || '—')
@@ -1989,8 +2044,8 @@
   /* ---------- Settings ---------- */
   $('#btnClearData').addEventListener('click', () => {
     if (!confirm('داده‌های اکسل پاک شوند؟')) return;
-    state.aras = []; state.battery = {}; state.pm = {};
-    $('#chipAras').innerHTML = ''; $('#chipBattery').innerHTML = ''; $('#chipPM').innerHTML = '';
+    state.aras = []; state.battery = {}; state.pm = {}; state.access = {};
+    $('#chipAras').innerHTML = ''; $('#chipBattery').innerHTML = ''; $('#chipPM').innerHTML = ''; $('#chipAccess').innerHTML = '';
     updateStats();
     toast('پاک شد');
   });
